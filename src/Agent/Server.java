@@ -42,6 +42,7 @@ public class Server {
                 printlnConsoleLog("Just connected to " + socket.getRemoteSocketAddress());
 
                 ServerHandle serverHandle = new ServerHandle(socket);
+                serverHandle.run();
             } catch (IOException e) {
                 e.printStackTrace();
             }
