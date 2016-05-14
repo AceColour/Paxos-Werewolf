@@ -68,22 +68,22 @@ public class ClientCLI {
 
     public void askUsername() {
         printConsole("Username: ");
-        setUsername(scanner.next());
+        setUsername(new String(scanner.next()));
     }
 
     public void askServerIpAddress() {
         printConsole("Server IP Adress: ");
-        setServerIpAddress(scanner.next());
+        setServerIpAddress(new String(scanner.next()));
     }
 
     public void askServerPort() {
         printConsole("Server Port: ");
-        setServerPortNumber(scanner.nextInt());
+        setServerPortNumber(new Integer(scanner.nextInt()));
     }
 
     public void askClientPort() {
         printConsole("Your port: ");
-        setClientPortNumber(scanner.nextInt());
+        setClientPortNumber(new Integer(scanner.nextInt()));
     }
 
     public void showWelcomeMessage() {
@@ -95,8 +95,40 @@ public class ClientCLI {
     }
 
     public void createAndRunClient() {
-        client = new Client(this.serverIpAddress, this.serverPortNumber, this.clientPortNumber);
+        client = new Client(this, this.serverIpAddress, this.serverPortNumber, this.clientPortNumber);
         client.run();
+    }
+
+    public void askForUsername() {
+        printlnConsole("Choose another username: ");
+        String inputString = scanner.next();
+        this.username = inputString;
+        client.sendJoinRequest(this.username, this.clientPortNumber);
+    }
+
+    public void askForJoinGame() {
+        printlnConsole("Type 'JOIN' to join game");
+        String inputString = scanner.next();
+        while (!inputString.toUpperCase().equals("JOIN")) {
+            printlnConsole("Type 'JOIN' to join game");
+            inputString = scanner.next();
+        }
+    }
+
+    public void askForReadyOrLeave() {
+        printlnConsole("Type 'READY' or 'LEAVE'");
+        String inputString = scanner.next();
+        while (!inputString.toUpperCase().equals("READY") && !inputString.toUpperCase().equals("LEAVE")) {
+            printlnConsole("Type 'READY' or 'LEAVE'");
+            inputString = scanner.next();
+        }
+
+        if (inputString.toUpperCase().equals("READY")) {
+            client.sendReadyRequest();
+        }
+        else { // LEAVE
+            client.sendLeaveRequest();
+        }
     }
 
     // Main
@@ -110,5 +142,9 @@ public class ClientCLI {
         clientCLI.askClientPort();
 
         clientCLI.createAndRunClient();
+
+        clientCLI.askForJoinGame();
+        clientCLI.client.sendJoinRequest(clientCLI.getUsername(), clientCLI.getClientPortNumber());
+
     }
 }
