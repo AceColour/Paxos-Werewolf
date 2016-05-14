@@ -2,6 +2,8 @@ package Agent;
 
 import Communication.*;
 import GamePlay.Game;
+import GamePlay.Player;
+import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.JSONValue;
 import org.json.simple.parser.JSONParser;
@@ -9,6 +11,7 @@ import org.json.simple.parser.ParseException;
 
 import java.net.Socket;
 import java.util.HashSet;
+import java.util.Iterator;
 
 /**
  * Created by erickchandra on 5/5/16.
@@ -21,7 +24,7 @@ public class ServerHandle extends Thread implements TCPThreadListener {
     TCPSender tcpSender;
 
     static Game game;
-    static Integer state = 0;
+    static Integer state;
     /*
      * State information:
      * 0: Waiting Join and Ready method
@@ -49,6 +52,10 @@ public class ServerHandle extends Thread implements TCPThreadListener {
         if (game == null) {
             game = new Game();
         }
+
+        if (state == null) {
+            state = 0;
+        }
     }
 
     // Getter
@@ -67,14 +74,7 @@ public class ServerHandle extends Thread implements TCPThreadListener {
             JSONObject sendJSONObject = new JSONObject();
             sendJSONObject.put("status", "error");
             sendJSONObject.put("description", "wrong request");
-            tcpSender = new TCPSender(clientSocket);
-            tcpSender.sendMessage(sendJSONObject.toJSONString());
-            try {
-                tcpSender.join();
-                printlnConsoleLog("TCP Sender Thread has ended.");
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
+            sendTcpMessage(sendJSONObject.toJSONString());
         }
         else {
             jsonObject = parseJSONStringToJSONObject(receivedString);
@@ -84,40 +84,48 @@ public class ServerHandle extends Thread implements TCPThreadListener {
                     JSONObject sendJSONObject = new JSONObject();
                     sendJSONObject.put("status", "fail");
                     sendJSONObject.put("status", "Please wait. Game is currently running.");
-                    tcpSender = new TCPSender(clientSocket);
-                    tcpSender.sendMessage(sendJSONObject.toJSONString());
-                    try {
-                        tcpSender.join();
-                        printlnConsoleLog("TCP Sender Thread has ended.");
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
+                    sendTcpMessage(sendJSONObject.toJSONString());
                 }
                 else if (jsonObject.get("method").equals("leave") && state != 0) {
                     JSONObject sendJSONObject = new JSONObject();
                     sendJSONObject.put("status", "fail");
                     sendJSONObject.put("status", "You are not allowed to leave. Game is running.");
-                    tcpSender = new TCPSender(clientSocket);
-                    tcpSender.sendMessage(sendJSONObject.toJSONString());
-                    try {
-                        tcpSender.join();
-                        printlnConsoleLog("TCP Sender Thread has ended.");
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
+                    sendTcpMessage(sendJSONObject.toJSONString());
                 }
                 else if (jsonObject.get("method").equals("client_address") && state == 0) {
                     JSONObject sendJSONObject = new JSONObject();
                     sendJSONObject.put("status", "fail");
                     sendJSONObject.put("status", "Game is not running. No client address could be retrieved.");
-                    tcpSender = new TCPSender(clientSocket);
-                    tcpSender.sendMessage(sendJSONObject.toJSONString());
-                    try {
-                        tcpSender.join();
-                        printlnConsoleLog("TCP Sender Thread has ended.");
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
+                    sendTcpMessage(sendJSONObject.toJSONString());
+                }
+                else if (jsonObject.get("method").equals("client_address") && state != 0 && state != 1) {
+                    JSONObject sendJSONObject = new JSONObject();
+                    sendJSONObject.put("status", "ok");
+
+                    HashSet<Player> playerHashSet = game.getPlayerHashSet();
+                    Iterator<Player> playerIterator = playerHashSet.iterator();
+                    Player currentPlayerInIterator;
+
+                    JSONArray jsonArrayClientList = new JSONArray();
+
+                    while (playerIterator.hasNext()) {
+                        currentPlayerInIterator = playerIterator.next();
+                        JSONObject jsonObjectPlayerDetails =  new JSONObject();
+                        jsonObjectPlayerDetails.put("player_id", currentPlayerInIterator.getPlayerId());
+                        jsonObjectPlayerDetails.put("is_alive", currentPlayerInIterator.getIsAlive() ? 1 : 0);
+                        jsonObjectPlayerDetails.put("address", currentPlayerInIterator.getUdpIpAddress());
+                        jsonObjectPlayerDetails.put("port", currentPlayerInIterator.getUdpPortNumber());
+                        jsonObjectPlayerDetails.put("username", currentPlayerInIterator.getUsername());
+                        if (currentPlayerInIterator.getIsAlive()) {
+                            jsonObjectPlayerDetails.put("role", currentPlayerInIterator.getIsWerewolf());
+                        }
+                        jsonArrayClientList.add(jsonObjectPlayerDetails);
                     }
+
+                    sendJSONObject.put("clients", jsonArrayClientList);
+                    sendJSONObject.put("description", "List of clients retrieved.");
+
+                    sendTcpMessage(sendJSONObject.toJSONString());
                 }
                 else {
                     receiveAndExecute(jsonObject);
@@ -159,20 +167,6 @@ public class ServerHandle extends Thread implements TCPThreadListener {
                         sendTcpMessage(sendJSONObject.toJSONString());
                     }
                 }
-                else if (receivedJSONObject.get("method").equals("ready")){
-                    if (game.readyGame(clientSocket.getRemoteSocketAddress().toString())) {
-                        JSONObject sendJSONObject = new JSONObject();
-                        sendJSONObject.put("status", "ok");
-                        sendJSONObject.put("description", "waiting for other player to start.");
-                        sendTcpMessage(sendJSONObject.toJSONString());
-                    }
-                    else {
-                        JSONObject sendJSONObject = new JSONObject();
-                        sendJSONObject.put("status", "fail");
-                        sendJSONObject.put("description", "You have not joined the game.");
-                        sendTcpMessage(sendJSONObject.toJSONString());
-                    }
-                }
                 else if (receivedJSONObject.get("method").equals("leave")) {
                     if (game.leaveGame(clientSocket.getRemoteSocketAddress().toString())) {
                         JSONObject sendJSONObject = new JSONObject();
@@ -191,6 +185,26 @@ public class ServerHandle extends Thread implements TCPThreadListener {
                 }
                 break;
             case 1:
+                if (receivedJSONObject.get("method").equals("ready")){
+                    if (game.readyGame(clientSocket.getRemoteSocketAddress().toString())) {
+                        JSONObject sendJSONObject = new JSONObject();
+                        sendJSONObject.put("status", "ok");
+                        sendJSONObject.put("description", "waiting for other player to start.");
+                        sendTcpMessage(sendJSONObject.toJSONString());
+                    }
+                    else {
+                        JSONObject sendJSONObject = new JSONObject();
+                        sendJSONObject.put("status", "fail");
+                        sendJSONObject.put("description", "You have not joined the game.");
+                        sendTcpMessage(sendJSONObject.toJSONString());
+                    }
+
+                    if (game.getIsStarted()) {
+                        // Game has started
+                        state = 2;
+                    }
+                }
+
                 break;
             case 2:
                 break;
