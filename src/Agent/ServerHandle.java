@@ -1,9 +1,11 @@
 package Agent;
 
-import Communication.TCPReceiver;
-import Communication.TCPThreadListener;
-import Communication.UDPReceiver;
-import Communication.UDPThreadListener;
+import Communication.*;
+import GamePlay.Game;
+import org.json.simple.JSONObject;
+import org.json.simple.JSONValue;
+import org.json.simple.parser.JSONParser;
+import org.json.simple.parser.ParseException;
 
 import java.net.Socket;
 import java.util.HashSet;
@@ -16,6 +18,19 @@ public class ServerHandle extends Thread implements TCPThreadListener {
     Socket clientSocket;
     public static HashSet<ServerHandle> serverHandleHashSet;
     TCPReceiver tcpReceiver;
+    TCPSender tcpSender;
+
+    static Game game;
+    static Integer state = 0;
+    /*
+     * State information:
+     * 0: Waiting Join and Ready method
+     * 1: All joined players are ready and Game is started
+     * 2: Server is waiting for KPU election
+     * 3: Server is waiting for vote_civilian (Civilian votes who will be killed)
+     * 4: Server is waiting for vote_werewolf (Werewolf votes which civilian will be killed)
+     * 5: Game over
+     */
 
     // Constructor
     public ServerHandle(Socket clientSocket) {
@@ -30,6 +45,10 @@ public class ServerHandle extends Thread implements TCPThreadListener {
         // Running TCP Receiver
         tcpReceiver = new TCPReceiver(clientSocket, this);
         tcpReceiver.start();
+
+        if (game == null) {
+            game = new Game();
+        }
     }
 
     // Getter
@@ -42,13 +61,175 @@ public class ServerHandle extends Thread implements TCPThreadListener {
     @Override
     public void onTCPDataReceived(String receivedString) {
         printlnConsoleLog("Received and caught from TCP: " + receivedString);
+        JSONObject jsonObject;
+        if (parseJSONStringToJSONObject(receivedString) == null) {
+            printlnConsoleLog("Invalid string received.");
+            JSONObject sendJSONObject = new JSONObject();
+            sendJSONObject.put("status", "error");
+            sendJSONObject.put("description", "wrong request");
+            tcpSender = new TCPSender(clientSocket);
+            tcpSender.sendMessage(sendJSONObject.toJSONString());
+            try {
+                tcpSender.join();
+                printlnConsoleLog("TCP Sender Thread has ended.");
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+        else {
+            jsonObject = parseJSONStringToJSONObject(receivedString);
+            if (jsonObject.containsKey("method")) {
+                // Inside this block, perform something based on states.
+                if (jsonObject.get("method").equals("join") && state != 0) {
+                    JSONObject sendJSONObject = new JSONObject();
+                    sendJSONObject.put("status", "fail");
+                    sendJSONObject.put("status", "Please wait. Game is currently running.");
+                    tcpSender = new TCPSender(clientSocket);
+                    tcpSender.sendMessage(sendJSONObject.toJSONString());
+                    try {
+                        tcpSender.join();
+                        printlnConsoleLog("TCP Sender Thread has ended.");
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+                else if (jsonObject.get("method").equals("leave") && state != 0) {
+                    JSONObject sendJSONObject = new JSONObject();
+                    sendJSONObject.put("status", "fail");
+                    sendJSONObject.put("status", "You are not allowed to leave. Game is running.");
+                    tcpSender = new TCPSender(clientSocket);
+                    tcpSender.sendMessage(sendJSONObject.toJSONString());
+                    try {
+                        tcpSender.join();
+                        printlnConsoleLog("TCP Sender Thread has ended.");
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+                else if (jsonObject.get("method").equals("client_address") && state == 0) {
+                    JSONObject sendJSONObject = new JSONObject();
+                    sendJSONObject.put("status", "fail");
+                    sendJSONObject.put("status", "Game is not running. No client address could be retrieved.");
+                    tcpSender = new TCPSender(clientSocket);
+                    tcpSender.sendMessage(sendJSONObject.toJSONString());
+                    try {
+                        tcpSender.join();
+                        printlnConsoleLog("TCP Sender Thread has ended.");
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+                else {
+                    receiveAndExecute(jsonObject);
+                }
+            }
+            else {
+                // Send Fail: No method found.
+                JSONObject sendJSONObject = new JSONObject();
+                sendJSONObject.put("status", "fail");
+                sendJSONObject.put("description", "No method found.");
+                tcpSender = new TCPSender(clientSocket);
+                tcpSender.sendMessage(sendJSONObject.toJSONString());
+                try {
+                    tcpSender.join();
+                    printlnConsoleLog("TCP Sender Thread has ended.");
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    public void receiveAndExecute(JSONObject receivedJSONObject) {
+        switch (state) {
+            case 0:
+                if (receivedJSONObject.get("method").equals("join")) {
+                    if (game.isUsernameFound(receivedJSONObject.get("username").toString())) {
+                        JSONObject sendJSONObject = new JSONObject();
+                        sendJSONObject.put("status", "fail");
+                        sendJSONObject.put("description", "Username exists.");
+                        sendTcpMessage(sendJSONObject.toJSONString());
+                    }
+                    else {
+                        Integer playerId;
+                        playerId = game.joinGame(receivedJSONObject.get("username").toString(), clientSocket.getRemoteSocketAddress().toString(), Integer.parseInt(receivedJSONObject.get("udp_port").toString()));
+                        JSONObject sendJSONObject = new JSONObject();
+                        sendJSONObject.put("status", "ok");
+                        sendJSONObject.put("player_id", playerId);
+                        sendTcpMessage(sendJSONObject.toJSONString());
+                    }
+                }
+                else if (receivedJSONObject.get("method").equals("ready")){
+                    if (game.readyGame(clientSocket.getRemoteSocketAddress().toString())) {
+                        JSONObject sendJSONObject = new JSONObject();
+                        sendJSONObject.put("status", "ok");
+                        sendJSONObject.put("description", "waiting for other player to start.");
+                        sendTcpMessage(sendJSONObject.toJSONString());
+                    }
+                    else {
+                        JSONObject sendJSONObject = new JSONObject();
+                        sendJSONObject.put("status", "fail");
+                        sendJSONObject.put("description", "You have not joined the game.");
+                        sendTcpMessage(sendJSONObject.toJSONString());
+                    }
+                }
+                else if (receivedJSONObject.get("method").equals("leave")) {
+                    if (game.leaveGame(clientSocket.getRemoteSocketAddress().toString())) {
+                        JSONObject sendJSONObject = new JSONObject();
+                        sendJSONObject.put("status", "ok");
+                        sendTcpMessage(sendJSONObject.toJSONString());
+                    }
+                    else {
+                        JSONObject sendJSONObject = new JSONObject();
+                        sendJSONObject.put("status", "fail");
+                        sendJSONObject.put("description", "You are not in the list.");
+                        sendTcpMessage(sendJSONObject.toJSONString());
+                    }
+                }
+                else {
+                    // Ignore
+                }
+                break;
+            case 1:
+                break;
+            case 2:
+                break;
+            case 3:
+                break;
+            case 4:
+                break;
+            default:
+                break;
+        }
     }
 
     public void run() {
 
     }
 
+    public void sendTcpMessage(String message) {
+        tcpSender = new TCPSender(clientSocket);
+        tcpSender.sendMessage(message);
+        try {
+            tcpSender.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
     public void printlnConsoleLog(String string) {
         System.out.println("|| SERVERHANDLE: " + string);
+    }
+
+    public JSONObject parseJSONStringToJSONObject(String string) {
+        JSONParser jsonParser = new JSONParser();
+        JSONObject jsonObject;
+        try {
+            jsonObject = new JSONObject((JSONObject) jsonParser.parse(string));
+        } catch (ParseException e) {
+            e.printStackTrace();
+            return null;
+        }
+        return jsonObject;
     }
 }
