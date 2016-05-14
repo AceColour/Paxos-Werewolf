@@ -24,9 +24,11 @@ public class Player {
     String username;
     String udpIpAddress;
     Integer udpPortNumber;
+    Boolean isReady;        // The player is whether or not ready for the game.
     Boolean isAlive;        // The player is whether or not alive in Werewolf Game.
     Boolean isConnected;    // The player is whether connected or disconnected (related to network communication).
     Boolean isLeft;         // The player has whether or not left the Werewolf Game (related to Join and Leave Game).
+    Boolean isWerewolf;     // The player is whether or not a werewolf (for role need).
     // Precedences
     //// isConnected > isLeft > isAlive
 
@@ -64,6 +66,8 @@ public class Player {
         return udpIpAddress;
     }
 
+    public Integer getUdpPortNumber() { return udpPortNumber; }
+
     public static Integer getLastPlayerId() {
         return lastPlayerId;
     }
@@ -76,12 +80,21 @@ public class Player {
         return isLeft;
     }
 
+    public Boolean getIsReady() { return isReady; }
+
+    public Boolean getIsAlive() { return isAlive; }
+
+    public Boolean getIsWerewolf() { return isWerewolf; }
+
     // Setter
+    public void setIsWerewolf(Boolean isWerewolf) {
+        this.isWerewolf = isWerewolf;
+    }
 
 
     // Methods
     public void readyGame() {
-        this.isAlive = true;
+        this.isReady = true;
     }
 
 }

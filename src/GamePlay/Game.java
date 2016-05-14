@@ -15,9 +15,10 @@ import java.util.Iterator;
  */
 public class Game {
     // Attributes
-    Integer dayCount = 0;
-    Boolean isDay = true;
-    Boolean isRunning = false;
+    Integer dayCount;
+    Boolean isDay;
+    Boolean isRunning;
+    Boolean isStarted;
 
     static HashSet<Player> playerHashSet;   // For storing all Players' information.
 
@@ -26,12 +27,30 @@ public class Game {
         if (playerHashSet == null) {
             playerHashSet = new HashSet<>();
         }
+
+        if (isRunning == null) {
+            isRunning = false;
+        }
+
+        if (isStarted == null) {
+            isStarted = false;
+        }
+
+        if (isDay == null) {
+            isDay = true;
+        }
+
+        if (dayCount == null) {
+            dayCount = 0;
+        }
     }
 
     // Getter
     public Boolean getIsDay() {
         return isDay;
     }
+
+    public Boolean getIsStarted() { return isStarted; }
 
     // Setter
 
@@ -101,13 +120,34 @@ public class Game {
                 playerInIterator = playerIterator.next();
                 if (playerInIterator.getPlayerId() == playerId) {
                     playerInIterator.readyGame();
-                    // CHECK IF GAME HAS STARTED HERE
-
+                    // CHECK IF GAME IS AVAILABLE TO BE STARTED
+                    if (isReadyStart()) {
+                        startGame();
+                    }
                     return true;
                 }
             }
             return false;
         }
+    }
+
+    public Boolean isReadyStart() {
+        // To check whether or not the game is available to start
+        // Checking procedure: Making sure all Players are CONNECTED AND THEN NOT LEAVING AND THEN READY.
+        Boolean found = false;
+        Iterator<Player> playerIterator = playerHashSet.iterator();
+        Player currentPlayerInIterator;
+        while (!found && playerIterator.hasNext()) {
+            currentPlayerInIterator = playerIterator.next();
+            if (currentPlayerInIterator.getIsConnected() && !currentPlayerInIterator.getIsLeft() && currentPlayerInIterator.getIsReady()) {
+                // PASS (doing nothing) and check next
+            }
+            else {
+                found = true;
+            }
+        }
+
+        return (!found);
     }
 
     public Boolean leaveGame(String udpIpAddress) {
@@ -128,5 +168,9 @@ public class Game {
             }
             return found;
         }
+    }
+
+    public void startGame() {
+        isStarted = true;
     }
 }
