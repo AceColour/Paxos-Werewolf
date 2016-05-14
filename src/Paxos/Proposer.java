@@ -1,6 +1,7 @@
 package Paxos;
 
 
+import GamePlay.Game;
 import GamePlay.Player;
 
 import java.util.HashMap;
@@ -23,7 +24,6 @@ public class Proposer {
     private Integer uniqueId;
     private Integer quorumSize;
     private HashMap<Integer, Integer> acceptorPreviousAcceptedValueHashMap = new HashMap<>(); // KEY: acceptedValue, VAL: count. If Acceptor sends nothing, KEY will be intentionally set to -1.
-    private Integer lastProposalValue;
 
     // Constructor
     public Proposer(Integer uniqueId, Integer quorumSize) {
@@ -91,7 +91,7 @@ public class Proposer {
                 randomValue = random.nextInt(Player.getLastPlayerId() + 1);
 
                 // Perform check if the randomValue is valid for being a KpuId.
-                Iterator<Player> playerIterator = Player.getPlayerHashSet().iterator();
+                Iterator<Player> playerIterator = Game.getPlayerHashSet().iterator();
                 Player currentPlayerInIterator;
                 Boolean playerFound = false;
                 while (!playerFound && playerIterator.hasNext()) {
