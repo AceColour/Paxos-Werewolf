@@ -2,6 +2,11 @@ package Agent;
 
 import CLI.ClientCLI;
 import Communication.*;
+import GamePlay.PlayerClient;
+import Paxos.Acceptor;
+import Paxos.ProposalId;
+import Paxos.Proposer;
+import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
@@ -12,6 +17,9 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.net.UnknownHostException;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.concurrent.*;
 
 /**
  * Created by erickchandra on 5/4/16.
@@ -29,6 +37,17 @@ public class Client implements TCPThreadListener, UDPThreadListener {
     UDPSender udpSender;
     ClientCLI clientCLI;
     Boolean isLeave = false;
+    Integer playerId;
+    Proposer proposer;
+    Acceptor acceptor;
+
+    // Clients information
+    HashSet<PlayerClient> playerClientHashSet = null;
+
+    // For Paxos Algorithm Information
+    Boolean isProposer = false;
+    Integer kpuIdSelected = null;
+    ExecutorService executorService;
 
     Integer state = 0;
     /*
@@ -92,7 +111,54 @@ public class Client implements TCPThreadListener, UDPThreadListener {
             printlnConsoleLog("Invalid string received.");
         }
         else {
-            receiveAndExecute(new JSONObject(parseJSONStringToJSONObject(receivedString)));
+            JSONObject receivedJSONObject = new JSONObject(parseJSONStringToJSONObject(receivedString));
+            if (receivedJSONObject.get("clients") != null) {
+                JSONParser jsonParser = new JSONParser();
+                JSONArray jsonArray = null;
+                try {
+                    jsonArray = (JSONArray) jsonParser.parse(receivedJSONObject.get("clients").toString());
+                } catch (ParseException e) {
+                    e.printStackTrace();
+                }
+                if (playerClientHashSet == null) {
+                    playerClientHashSet = new HashSet<>();
+                    for (int i = 0; i < jsonArray.size(); i++) {
+                        JSONObject jsonObject;
+                        jsonObject = (JSONObject) jsonArray.get(i);
+                        PlayerClient playerClient = new PlayerClient(Integer.parseInt(jsonObject.get("player_id").toString()), Integer.parseInt(jsonObject.get("is_alive").toString()) == 1, jsonObject.get("address").toString(), Integer.parseInt(jsonObject.get("port").toString()), jsonObject.get("username").toString());
+                        playerClientHashSet.add(playerClient);
+                    }
+                }
+                else {
+                    for (int i = 0; i < jsonArray.size(); i++) {
+                        JSONObject jsonObject;
+                        jsonObject = (JSONObject) jsonArray.get(i);
+                        PlayerClient playerClient = new PlayerClient(Integer.parseInt(jsonObject.get("player_id").toString()), Integer.parseInt(jsonObject.get("is_alive").toString()) == 1, jsonObject.get("address").toString(), Integer.parseInt(jsonObject.get("port").toString()), jsonObject.get("username").toString());
+                        String role;
+                        if (!playerClient.getIsAlive()) {
+                            role = jsonObject.get("role").toString();
+
+                            // Iterate through playerClientHashSet and update value
+                            Iterator<PlayerClient> iterator = playerClientHashSet.iterator();
+                            PlayerClient currentPlayerClientInIterator;
+                            while (iterator.hasNext()) {
+                                currentPlayerClientInIterator = iterator.next();
+                                if (currentPlayerClientInIterator.getPlayerId() == playerClient.getPlayerId()) {
+                                    currentPlayerClientInIterator.setIsAlive(playerClient.getIsAlive());
+                                    currentPlayerClientInIterator.setRole(role);
+                                    break;
+                                }
+                                else {
+                                    // Do nothing, continue loop
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else {
+                receiveAndExecute(receivedJSONObject);
+            }
         }
     }
 
@@ -142,6 +208,7 @@ public class Client implements TCPThreadListener, UDPThreadListener {
             case 0:
                 if (receivedJsonObject.get("status").equals("ok")) {
                     state = 1;
+                    this.playerId = Integer.parseInt(receivedJsonObject.get("player_id").toString());
                     clientCLI.askForReadyOrLeave();
                 }
                 else {
@@ -169,11 +236,97 @@ public class Client implements TCPThreadListener, UDPThreadListener {
                     JSONObject jsonObject = new JSONObject();
                     jsonObject.put("status", "ok");
                     sendTcpMessage(jsonObject.toJSONString());
+                    jsonObject = new JSONObject();
+                    jsonObject.put("method", "client_address");
+                    sendTcpMessage(jsonObject.toJSONString());
+                    while (playerClientHashSet == null) {
+                        sendTcpMessage(jsonObject.toJSONString());
+                    }
+
+                    setProposerOrAcceptor();
+                    if (isProposer) {
+                        startProposer();
+                    }
+                }
+                break;
+            case 5:
+                if (isProposer) {
+                    
                 }
                 break;
             default:
                 break;
         }
+    }
+
+    public void setProposerOrAcceptor() {
+        HashSet<PlayerClient> playerClientHashSetClone = new HashSet<>(playerClientHashSet);
+        Iterator<PlayerClient> iterator = playerClientHashSetClone.iterator();
+        PlayerClient currentPlayerClientInIterator;
+        Integer maxPlayerId = null;
+        while (iterator.hasNext()) {
+            currentPlayerClientInIterator = iterator.next();
+            if (maxPlayerId == null) {
+                maxPlayerId = currentPlayerClientInIterator.getPlayerId();
+            }
+            else {
+                if (currentPlayerClientInIterator.getPlayerId() > maxPlayerId) {
+                    maxPlayerId = currentPlayerClientInIterator.getPlayerId();
+                }
+            }
+        }
+
+        if (maxPlayerId == this.playerId) {
+            isProposer = true;
+        }
+        else {
+            // Find Max 2
+            Integer maxPlayerId2 = null;
+            iterator = playerClientHashSetClone.iterator();
+            while (iterator.hasNext()) {
+                currentPlayerClientInIterator = iterator.next();
+                if (maxPlayerId2 == null && maxPlayerId != currentPlayerClientInIterator.getPlayerId()) {
+                    maxPlayerId2 = currentPlayerClientInIterator.getPlayerId();
+                }
+                else {
+                    if (maxPlayerId != currentPlayerClientInIterator.getPlayerId() && currentPlayerClientInIterator.getPlayerId() > maxPlayerId2) {
+                        maxPlayerId2 = currentPlayerClientInIterator.getPlayerId();
+                    }
+                }
+            }
+
+            if (maxPlayerId2 == this.playerId) {
+                isProposer = true;
+            }
+        }
+    }
+
+    public void startProposer() {
+        executorService = Executors.newSingleThreadExecutor();
+        Future<String> future = executorService.submit(new Task());
+
+        try {
+            future.get(3, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        } catch (ExecutionException e) {
+            e.printStackTrace();
+        } catch (TimeoutException e) {
+//            e.printStackTrace();
+            future.cancel(true);
+            printlnConsoleLog("Proposer timeout.");
+            if (kpuIdSelected == null) {
+                sendUdpPrepare(proposer);
+            }
+        }
+
+        executorService.shutdownNow();
+
+        if (state == 5 && kpuIdSelected == null) {
+            startProposer();
+        }
+
+        kpuIdSelected = null;
     }
 
     public void sendJoinRequest(String username, Integer udpPortNumber) {
@@ -200,5 +353,32 @@ public class Client implements TCPThreadListener, UDPThreadListener {
         jsonObject.put("method", "leave");
         isLeave = true;
         sendTcpMessage(jsonObject.toJSONString());
+    }
+
+    public void sendUdpPrepare(Proposer proposer) {
+        ProposalId proposalId;
+        proposalId = proposer.sendPrepare();
+        Iterator<PlayerClient> iterator = playerClientHashSet.iterator();
+        PlayerClient currentPlayerClientInIterator;
+        while (iterator.hasNext()) {
+            currentPlayerClientInIterator = iterator.next();
+            JSONObject jsonObject = new JSONObject();
+            JSONArray jsonArray = new JSONArray();
+            jsonArray.add(proposalId.getProposalNumber());
+            jsonArray.add(proposalId.getUniqueId());
+            jsonObject.put("method", "prepare_proposal");
+            jsonObject.put("proposal_id", jsonArray);
+            sendUdpMessage(jsonObject.toJSONString(), currentPlayerClientInIterator.getUdpIpAddress(), currentPlayerClientInIterator.getUdpPortNumber());
+        }
+    }
+}
+
+class Task implements Callable<String> {
+    @Override
+    public String call() throws Exception {
+        while (!Thread.interrupted()) {
+            // Waiting to timeout
+        }
+        return "Ready!";
     }
 }

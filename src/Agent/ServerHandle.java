@@ -207,6 +207,7 @@ public class ServerHandle extends Thread implements TCPThreadListener {
 
                 break;
             case 2:
+                if (receivedJSONObject.get("method").equals("accepted_proposal"))
                 break;
             case 3:
                 break;
