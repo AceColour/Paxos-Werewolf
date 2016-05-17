@@ -17,6 +17,7 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.net.UnknownHostException;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.concurrent.*;
@@ -245,13 +246,52 @@ public class Client implements TCPThreadListener, UDPThreadListener {
 
                     setProposerOrAcceptor();
                     if (isProposer) {
+                        proposer = new Proposer(playerId, quorumSize());
                         startProposer();
+                    }
+                    else {
+                        acceptor = new Acceptor();
                     }
                 }
                 break;
             case 5:
                 if (isProposer) {
-                    
+                    if (receivedJsonObject.get("status").equals("ok") && receivedJsonObject.get("description").equals("accepted")) {
+                        HashMap<ProposalId, Integer> hashMap;
+                        hashMap = proposer.receivePromise(Integer.parseInt(receivedJsonObject.get("previous_accepted").toString()));
+                        sendUdpAccept(hashMap);
+                    }
+                }
+                else {
+                    if (receivedJsonObject.get("method").equals("prepare_proposal")) {
+                        JSONParser jsonParser = new JSONParser();
+                        JSONArray jsonArray = null;
+                        try {
+                            jsonArray = (JSONArray) jsonParser.parse(receivedJsonObject.get("proposal_id").toString());
+                        } catch (ParseException e) {
+                            e.printStackTrace();
+                        }
+                        ProposalId tempProposalId = new ProposalId(Integer.parseInt(jsonArray.get(0).toString()), Integer.parseInt(jsonArray.get(1).toString()));
+                        HashMap<ProposalId, Integer> reply = acceptor.receivePromise(tempProposalId);
+                        sendUdpAccept(reply);
+                    }
+                    else if (receivedJsonObject.get("method").equals("accept_proposal")) {
+                        JSONParser jsonParser = new JSONParser();
+                        JSONArray jsonArray = null;
+                        try {
+                            jsonArray = (JSONArray) jsonParser.parse(receivedJsonObject.get("proposal_id").toString());
+                        } catch (ParseException e) {
+                            e.printStackTrace();
+                        }
+                        ProposalId tempProposalId = new ProposalId(Integer.parseInt(jsonArray.get(0).toString()), Integer.parseInt(jsonArray.get(1).toString()));
+                        if (acceptor.receiveAccept(tempProposalId, Integer.parseInt(receivedJsonObject.get("kpu_id").toString()))) {
+                            JSONObject jsonObject = new JSONObject();
+                            jsonObject.put("method", "accepted_proposal");
+                            jsonObject.put("kpu_id", Integer.parseInt(receivedJsonObject.get("kpu_id").toString()));
+                            jsonObject.put("description", "Kpu is selected.");
+                            sendTcpMessage(jsonObject.toJSONString());
+                        }
+                    }
                 }
                 break;
             default:
@@ -301,6 +341,10 @@ public class Client implements TCPThreadListener, UDPThreadListener {
         }
     }
 
+    public Integer quorumSize() {
+        return (playerClientHashSet.size() / 2) + 1;
+    }
+
     public void startProposer() {
         executorService = Executors.newSingleThreadExecutor();
         Future<String> future = executorService.submit(new Task());
@@ -315,7 +359,7 @@ public class Client implements TCPThreadListener, UDPThreadListener {
 //            e.printStackTrace();
             future.cancel(true);
             printlnConsoleLog("Proposer timeout.");
-            if (kpuIdSelected == null) {
+            if (kpuIdSelected == null && state == 5) {
                 sendUdpPrepare(proposer);
             }
         }
@@ -358,16 +402,45 @@ public class Client implements TCPThreadListener, UDPThreadListener {
     public void sendUdpPrepare(Proposer proposer) {
         ProposalId proposalId;
         proposalId = proposer.sendPrepare();
+
+        JSONObject jsonObject = new JSONObject();
+        JSONArray jsonArray = new JSONArray();
+        jsonArray.add(proposalId.getProposalNumber());
+        jsonArray.add(proposalId.getUniqueId());
+        jsonObject.put("method", "prepare_proposal");
+        jsonObject.put("proposal_id", jsonArray);
+
         Iterator<PlayerClient> iterator = playerClientHashSet.iterator();
         PlayerClient currentPlayerClientInIterator;
         while (iterator.hasNext()) {
             currentPlayerClientInIterator = iterator.next();
-            JSONObject jsonObject = new JSONObject();
-            JSONArray jsonArray = new JSONArray();
-            jsonArray.add(proposalId.getProposalNumber());
-            jsonArray.add(proposalId.getUniqueId());
-            jsonObject.put("method", "prepare_proposal");
-            jsonObject.put("proposal_id", jsonArray);
+
+            sendUdpMessage(jsonObject.toJSONString(), currentPlayerClientInIterator.getUdpIpAddress(), currentPlayerClientInIterator.getUdpPortNumber());
+        }
+    }
+
+    public void sendUdpAccept(HashMap<ProposalId, Integer> hashMap) {
+        JSONObject jsonObject = new JSONObject();
+        JSONArray jsonArray = new JSONArray();
+        jsonObject.put("method", "accept_proposal");
+
+        ProposalId sendProposalId = null;
+        Integer sendAcceptValue = null;
+        for (ProposalId proposalId : hashMap.keySet()) {
+            sendProposalId = proposalId;
+            sendAcceptValue = hashMap.get(proposalId);
+        }
+        jsonArray.add(sendProposalId.getProposalNumber());
+        jsonArray.add(sendProposalId.getUniqueId());
+
+        jsonObject.put("proposal_id", jsonArray);
+        jsonObject.put("kpu_id", sendAcceptValue);
+
+        Iterator<PlayerClient> iterator = playerClientHashSet.iterator();
+        PlayerClient currentPlayerClientInIterator;
+        while (iterator.hasNext()) {
+            currentPlayerClientInIterator = iterator.next();
+
             sendUdpMessage(jsonObject.toJSONString(), currentPlayerClientInIterator.getUdpIpAddress(), currentPlayerClientInIterator.getUdpPortNumber());
         }
     }

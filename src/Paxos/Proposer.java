@@ -36,6 +36,11 @@ public class Proposer {
         return quorumSize;
     }
 
+    public ProposalId getProposalId() {
+        ProposalId proposalId = new ProposalId(lastProposalNumber, uniqueId);
+        return proposalId;
+    }
+
     // Setter
     public void setQuorumSize(Integer quorumSize) {
         this.quorumSize = quorumSize;
